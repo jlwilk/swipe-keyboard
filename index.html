@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Swipe Keyboard POC</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html {
+      height: 100dvh;
+      height: 100vh; /* fallback */
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      height: 100dvh;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+    }
+
+    #text-display {
+      flex: 1;
+      padding: 24px;
+      font-size: 24px;
+      line-height: 1.6;
+      background: #16213e;
+      overflow-y: auto;
+    }
+    #text-display .cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1.2em;
+      background: #4fc3f7;
+      animation: blink 1s infinite;
+      vertical-align: text-bottom;
+    }
+    @keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+
+
+    #keyboard {
+      background: #0f3460;
+      padding: 6px 4px calc(env(safe-area-inset-bottom, 0px) + 8px);
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    #status-bar {
+      text-align: center;
+      padding: 4px;
+      font-size: 12px;
+      color: #888;
+      background: #0a0a2e;
+      flex-shrink: 0;
+    }
+
+    .kb-row {
+      display: flex;
+      justify-content: center;
+      margin: 3px 0;
+      gap: 4px;
+    }
+
+    .key {
+      min-width: 32px;
+      height: 46px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 500;
+      background: #1a1a4e;
+      color: #eee;
+      cursor: pointer;
+      transition: all 0.12s;
+      position: relative;
+      flex: 1;
+      max-width: 42px;
+    }
+    .key:active, .key.active {
+      background: #4fc3f7;
+      color: #111;
+      transform: scale(1.1);
+      z-index: 2;
+    }
+    .key.predict {
+      background: #2e7d32;
+      color: #fff;
+      max-width: none;
+      flex: 1;
+    }
+    .key.predict:active, .key.predict.active {
+      background: #66bb6a;
+      color: #111;
+    }
+    .key.predict.visited {
+      background: #1b5e20;
+      color: #aaa;
+    }
+    .key.predict.word-key {
+      background: #1565c0;
+      font-size: 13px;
+      min-width: 50px;
+      flex: 1.5;
+      letter-spacing: -0.3px;
+    }
+    .key.predict.word-key:active, .key.predict.word-key.active {
+      background: #42a5f5;
+      color: #111;
+    }
+    /* Swipe direction arrows */
+    .swipe-arrow {
+      text-align: center;
+      font-size: 14px;
+      color: transparent;
+      height: 0;
+      line-height: 16px;
+      overflow: visible;
+      transition: all 0.2s;
+      pointer-events: none;
+      z-index: 5;
+      position: relative;
+    }
+    .swipe-arrow.visible {
+      color: #4fc3f7;
+      height: 16px;
+      animation: pulseArrow 1s ease-in-out infinite;
+    }
+    @keyframes pulseArrow {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+
+    /* Glow on active prediction row */
+    .kb-row.glow {
+      animation: rowGlow 0.6s ease-out;
+    }
+    @keyframes rowGlow {
+      0% { box-shadow: 0 0 15px rgba(79, 195, 247, 0.6); }
+      100% { box-shadow: none; }
+    }
+
+    .key.action {
+      background: #2a2a5e;
+      font-size: 14px;
+      min-width: 50px;
+      max-width: 70px;
+    }
+    .key.space {
+      flex: 4;
+      max-width: 220px;
+      font-size: 14px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.8); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    .key .key-label {
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Swipe indicator */
+    #swipe-indicator {
+      position: fixed;
+      pointer-events: none;
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: rgba(79, 195, 247, 0.3);
+      border: 2px solid #4fc3f7;
+      transform: translate(-50%, -50%);
+      display: none;
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    #swipe-indicator.visible {
+      display: flex;
+    }
+
+    #current-input {
+      display: inline;
+      color: #4fc3f7;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+<div id="text-display">
+  <span id="typed-text"></span><span id="current-input"></span><span class="cursor"></span>
+</div>
+
+<div id="keyboard">
+  <div id="predict-top" class="kb-row"></div>
+  <div id="arrow-up" class="swipe-arrow arrow-up">&#9650;</div>
+  <div id="row-top" class="kb-row"></div>
+  <div id="row-mid" class="kb-row"></div>
+  <div id="row-bot" class="kb-row"></div>
+  <div id="arrow-down" class="swipe-arrow arrow-down">&#9660;</div>
+  <div id="predict-bot" class="kb-row"></div>
+  <div class="kb-row">
+    <div class="key action" data-action="backspace">&#9003;</div>
+    <div class="key space" data-action="space">space</div>
+    <div class="key action" data-action="enter">&#9166;</div>
+  </div>
+</div>
+
+<div id="status-bar">Tap a letter to start, then swipe to predicted letters</div>
+
+<div id="swipe-indicator"></div>
+
+<script src="words.js"></script>
+<script>
+// ---- Word corpus: loaded from words.js (10k most common English words) ----
+
+// ---- Prefix-aware prediction engine ----
+// Pre-build a trie-like index for fast prefix lookups
+const prefixIndex = new Map();
+
+function buildPrefixIndex() {
+  // Deduplicate while preserving order (earlier = more common)
+  const seen = new Set();
+  const unique = [];
+  for (const w of WORDS) {
+    const lw = w.toLowerCase();
+    if (!seen.has(lw) && /^[a-z]+$/.test(lw)) {
+      seen.add(lw);
+      unique.push(lw);
+    }
+  }
+
+  // Weight by frequency rank — word at index 0 counts more than word at index 9999
+  for (let wi = 0; wi < unique.length; wi++) {
+    const word = unique[wi];
+    const weight = Math.max(1, Math.round(100 * (1 - wi / unique.length)));
+    for (let i = 0; i < word.length - 1; i++) {
+      const prefix = word.slice(0, i + 1);
+      const nextChar = word[i + 1];
+      if (!prefixIndex.has(prefix)) {
+        prefixIndex.set(prefix, new Map());
+      }
+      const counts = prefixIndex.get(prefix);
+      counts.set(nextChar, (counts.get(nextChar) || 0) + weight);
+    }
+  }
+}
+
+buildPrefixIndex();
+
+// Get predicted next letters for a given prefix, ranked by frequency
+function getPredictions(prefix) {
+  prefix = prefix.toLowerCase();
+  const counts = prefixIndex.get(prefix);
+  if (!counts || counts.size === 0) {
+    // Fallback: use last character's predictions
+    const lastChar = prefix[prefix.length - 1];
+    const fallback = prefixIndex.get(lastChar);
+    if (!fallback) return 'etaoinsrhld'.split('');
+    return [...fallback.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([ch]) => ch)
+      .slice(0, 10);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([ch]) => ch)
+    .slice(0, 10);
+}
+
+// Build a frequency-ordered unique word list once at init
+const WORDS_BY_FREQ = (() => {
+  const seen = new Set();
+  const result = [];
+  for (const w of WORDS) {
+    const lw = w.toLowerCase();
+    if (!seen.has(lw) && /^[a-z]+$/.test(lw)) {
+      seen.add(lw);
+      result.push(lw);
+    }
+  }
+  return result;
+})();
+
+// Get word completions for a prefix, ranked by frequency
+function getWordCompletions(prefix) {
+  prefix = prefix.toLowerCase();
+  return WORDS_BY_FREQ
+    .filter(w => w.startsWith(prefix) && w !== prefix)
+    .slice(0, 8);
+}
+
+// ---- Word bigram predictions (common word pairs) ----
+const WORD_BIGRAMS = {
+  'i': ['am','think','have','was','can','don','will','know','want','would','got','need','just','love','like','feel','mean','had','did','get'],
+  'the': ['best','first','most','same','new','last','next','other','world','only','end','way','right','whole','old','big','united','following','main','real'],
+  'to': ['be','the','do','get','make','have','go','see','find','know','take','say','give','use','keep','help','think','work','come','put'],
+  'and': ['the','i','it','a','we','he','they','she','then','that','you','this','all','my','his','her','our','some','other','more'],
+  'a': ['lot','new','few','good','great','little','big','very','long','single','bit','small','large','simple','better','major','real','whole','special','young'],
+  'of': ['the','a','this','his','our','my','all','their','its','her','your','it','some','any','these','each','those','many','new','other'],
+  'in': ['the','a','this','my','his','our','your','their','an','order','fact','some','her','any','it','one','its','that','all','other'],
+  'is': ['a','the','not','that','it','this','an','one','no','very','just','also','there','what','still','how','more','really','so','too'],
+  'it': ['is','was','will','would','can','has','the','could','should','may','might','takes','seems','looks','feels','makes','gets','works','comes','does','out','up','down','back','off','on','in','all','right','done'],
+  'that': ['the','is','it','he','i','was','we','she','they','you','a','this','would','will','can','are','has','have','there','could'],
+  'for': ['the','a','this','all','any','your','my','our','each','some','more','it','me','you','us','him','them','her','example','free'],
+  'you': ['can','are','have','want','need','will','know','don','would','think','should','could','get','see','like','may','might','do','were','had'],
+  'was': ['a','the','not','in','born','very','going','just','still','one','also','so','an','about','too','only','it','made','really','there'],
+  'on': ['the','a','this','his','my','your','our','her','its','an','it','one','top','all','that','both','their','each','any','some'],
+  'with': ['the','a','his','her','my','an','our','your','its','this','all','no','some','their','each','any','one','other','more','many'],
+  'he': ['was','is','had','has','said','would','did','will','could','also','can','went','got','may','should','might','came','then','just','made'],
+  'are': ['you','not','the','there','we','they','a','also','some','all','many','still','more','very','here','just','so','no','now','being'],
+  'as': ['a','the','well','much','it','an','they','he','we','you','she','far','long','if','soon','possible','many','part','such','i'],
+  'this': ['is','was','will','can','would','may','has','means','could','should','one','might','year','way','time','kind','point','really','thing','new'],
+  'they': ['are','have','were','will','can','would','had','do','could','don','may','should','also','might','did','want','need','know','said','think'],
+  'we': ['are','have','can','will','were','would','had','do','need','don','should','could','also','want','may','all','know','must','might','think'],
+  'have': ['a','been','to','the','not','no','any','it','some','an','you','had','more','their','already','all','just','my','also','many'],
+  'my': ['own','name','life','first','heart','mind','wife','mother','father','head','friend','house','hand','family','love','way','best','home','phone','self'],
+  'not': ['only','be','the','a','have','to','just','even','yet','all','as','in','so','that','it','sure','very','really','too','enough'],
+  'do': ['you','not','it','the','we','they','i','that','this','so','what','anything','something','with','more','much','any','everything','all','well'],
+  'what': ['is','are','you','i','was','we','do','he','they','she','the','it','about','would','if','kind','does','did','can','happens'],
+  'can': ['be','you','i','we','also','do','the','help','get','they','find','make','see','use','only','have','still','just','provide','take'],
+  'would': ['be','have','you','like','not','the','he','i','it','she','they','we','make','say','do','rather','also','just','never','still'],
+  'all': ['the','of','over','about','around','in','that','these','other','our','his','your','its','their','day','time','we','you','things','right'],
+  'there': ['is','are','was','were','will','has','have','would','can','may','should','could','might','had','also','must','shall','seems','no','any'],
+  'so': ['much','many','that','i','it','the','far','what','we','you','they','he','she','long','good','well','if','this','be','hard'],
+  'will': ['be','have','not','the','also','you','it','help','make','need','take','find','get','give','provide','never','always','keep','come','work'],
+  'if': ['you','the','it','i','a','we','he','they','she','there','this','your','not','any','so','that','my','one','our','an'],
+  'just': ['a','the','about','like','as','one','to','because','how','had','don','want','been','got','need','thought','said','make','another','started'],
+  'about': ['the','a','it','this','how','what','his','my','her','your','our','an','that','their','us','them','me','him','life','two'],
+  'how': ['to','much','many','the','do','long','about','can','i','you','it','we','they','far','well','did','would','often','does','big'],
+  'one': ['of','the','day','more','can','who','would','way','thing','could','is','has','time','year','might','another','that','should','was','will'],
+  'time': ['to','and','the','of','in','i','is','it','for','when','a','was','that','we','at','he','she','with','on','or'],
+  'when': ['i','you','the','he','it','they','we','she','a','my','there','his','your','our','this','an','one','that','her','all'],
+  'up': ['to','the','a','and','with','in','for','on','his','her','my','your','at','from','by','an','their','its','being','again'],
+  'go': ['to','back','out','on','for','home','ahead','through','with','down','into','away','up','over','around','get','and','in','see','there'],
+  'no': ['one','more','longer','matter','way','doubt','idea','reason','need','other','problem','point','chance','time','evidence','sense','further','sign','place','thing'],
+  'like': ['a','the','this','that','it','to','i','an','you','he','she','we','they','all','any','most','some','my','being','one'],
+  'get': ['a','the','it','to','in','out','back','up','into','your','my','more','some','him','her','them','rid','started','ready','home'],
+  'make': ['a','the','it','sure','up','your','an','my','them','him','her','me','use','sense','money','any','good','room','way','more'],
+  'know': ['that','what','how','if','about','the','i','you','it','where','when','why','who','whether','him','her','them','this','anything','everything'],
+  'people': ['who','are','in','with','have','can','will','would','the','do','of','that','from','and','think','want','need','like','say','don'],
+  'than': ['the','a','one','any','it','that','he','i','they','we','she','you','ever','expected','most','two','half','what','three','just'],
+  // ---- Expanded bigrams ----
+  'been': ['a','the','in','to','so','there','able','here','doing','made','very','more','around','through','going','working','used','given','set','said'],
+  'good': ['at','for','thing','idea','time','morning','way','enough','luck','job','news','people','and','reason','place','night','day','to','work','man'],
+  'great': ['deal','way','job','work','thing','time','place','idea','news','for','and','to','experience','opportunity','value','day','example','many','success','at'],
+  'best': ['way','thing','to','for','of','in','part','place','time','experience','friend','option','choice','practice','possible','result','value','chance','i','we'],
+  'first': ['time','place','thing','day','year','step','part','half','one','two','person','to','name','and','round','season','ever','few','look','i'],
+  'last': ['year','time','week','night','day','month','few','two','three','one','season','name','minute','chance','thing','summer','place','resort','long','part'],
+  'new': ['york','way','one','and','to','life','world','home','book','year','job','look','people','system','name','music','game','product','era','car'],
+  'old': ['man','enough','friend','school','days','age','fashioned','one','world','and','woman','house','town','way','style','times','testament','boy','home','dog'],
+  'other': ['people','than','things','hand','side','way','words','countries','two','day','end','part','members','areas','places','one','forms','times','options','reasons'],
+  'some': ['of','people','thing','things','time','other','way','kind','point','reason','cases','are','have','one','more','new','sort','form','may','good'],
+  'very': ['much','good','well','important','different','few','long','hard','nice','first','small','interesting','big','large','high','happy','simple','easy','little','similar'],
+  'also': ['a','the','be','have','been','known','include','available','used','has','had','said','called','very','help','make','need','want','find','provide'],
+  'only': ['a','the','one','to','way','thing','in','be','if','that','by','for','time','after','because','when','two','part','person','about'],
+  'then': ['the','i','he','it','you','we','they','she','a','there','again','what','we','this','my','came','went','said','is','was'],
+  'now': ['i','the','it','that','we','you','is','and','a','he','they','she','there','have','this','in','what','let','here','all'],
+  'even': ['if','though','more','the','a','when','in','after','so','with','as','better','before','now','then','further','less','than','he','it'],
+  'well': ['as','known','i','the','it','that','be','and','in','you','we','they','he','she','done','what','enough','then','there','a'],
+  'back': ['to','in','and','the','on','at','into','from','up','home','again','then','down','with','a','out','when','there','here','for'],
+  'still': ['a','the','have','be','not','in','is','had','has','very','being','here','there','alive','going','more','need','want','think','waiting'],
+  'after': ['the','a','all','that','he','i','being','his','her','it','this','she','they','we','two','my','our','your','an','some'],
+  'think': ['that','about','it','of','i','the','we','you','this','so','he','she','they','is','there','its','most','any','your','my'],
+  'most': ['of','people','important','likely','common','popular','the','are','often','recent','part','things','cases','other','famous','interesting','effective','beautiful','powerful','a'],
+  'said': ['the','he','it','that','she','in','they','i','we','a','his','her','there','to','nothing','no','my','something','this','you'],
+  'over': ['the','a','and','to','his','her','time','here','there','my','again','two','all','it','in','into','at','them','their','an'],
+  'much': ['more','of','the','as','about','better','less','to','a','like','for','it','i','longer','harder','easier','faster','higher','lower','greater'],
+  'many': ['of','people','things','other','more','years','times','ways','different','countries','have','are','cases','places','a','the','as','students','others','kinds'],
+  'before': ['the','i','it','he','you','they','we','she','a','being','that','this','and','any','his','her','my','your','going','coming'],
+  'right': ['now','to','here','and','away','thing','the','about','in','there','for','hand','side','place','time','back','way','up','at','direction'],
+  'long': ['time','way','as','ago','enough','run','term','before','and','after','been','island','story','history','day','list','road','distance','period','range'],
+  'too': ['much','many','long','far','late','early','bad','good','big','small','often','hard','easy','fast','slow','soon','old','young','hot','cold'],
+  'really': ['good','like','want','is','don','think','need','great','nice','well','bad','hard','important','interesting','cool','happy','sorry','enjoy','hope','love'],
+  'never': ['been','have','had','be','seen','heard','thought','knew','mind','before','again','going','want','said','came','felt','gave','forget','imagined','expected'],
+  'day': ['and','of','the','i','in','is','was','we','when','at','to','after','before','one','that','by','a','or','he','it'],
+  'way': ['to','of','the','you','we','it','i','that','is','a','he','she','they','around','back','in','through','out','up','home'],
+  'down': ['the','to','and','a','in','on','at','his','her','by','from','into','there','here','with','for','my','your','it','an'],
+  'out': ['of','the','and','to','a','in','there','for','on','that','it','with','here','at','what','how','about','from','his','her'],
+  'come': ['back','to','up','in','out','from','and','on','with','home','here','down','into','a','the','over','through','together','along','across'],
+  'take': ['a','the','it','care','place','time','off','out','up','on','over','your','my','this','that','some','any','them','him','her'],
+  'could': ['be','have','not','see','get','hear','feel','tell','make','find','do','say','think','go','take','use','also','help','come','give'],
+  'should': ['be','have','not','i','you','we','they','the','also','it','a','know','make','take','do','get','go','try','look','keep'],
+  'need': ['to','a','the','for','it','more','not','help','some','your','is','any','be','are','that','this','you','new','much','all'],
+  'want': ['to','a','the','it','me','you','is','them','him','her','us','my','your','something','anything','more','that','this','people','everyone'],
+  'look': ['at','for','like','good','into','up','back','out','forward','the','a','around','great','here','after','through','down','over','and','nice'],
+  'give': ['me','you','it','a','the','them','him','her','us','up','your','my','back','away','out','more','some','this','that','any'],
+  'help': ['you','me','the','us','them','him','her','with','is','people','it','your','to','and','each','other','a','our','my','make'],
+  'find': ['a','the','out','it','that','your','my','them','him','her','more','some','any','what','this','new','good','right','one','an'],
+  'tell': ['me','you','the','him','her','them','us','it','a','my','your','about','what','if','how','that','whether','anyone','people','someone'],
+  'try': ['to','and','it','the','a','again','not','out','my','your','something','new','hard','this','that','different','harder','another','other','some'],
+  'work': ['on','with','for','in','out','and','is','at','the','together','hard','well','to','a','from','it','as','through','around','of'],
+  'call': ['it','the','me','him','her','them','a','for','and','on','back','up','out','your','my','this','that','us','to','in'],
+  'keep': ['the','it','in','up','your','my','going','a','an','on','them','him','her','me','track','out','from','doing','away','coming'],
+  'put': ['it','the','a','in','on','up','them','him','her','my','your','together','down','out','into','back','away','some','more','an'],
+  'use': ['the','a','it','of','this','to','your','my','and','in','them','is','for','as','an','our','any','these','that','more'],
+  'got': ['a','the','to','it','in','my','his','her','back','out','up','home','there','here','into','some','no','nothing','married','one'],
+  'see': ['the','a','if','it','what','how','you','him','her','them','this','that','my','your','more','any','who','here','our','some'],
+  'had': ['a','been','the','to','no','not','it','his','her','my','an','already','just','never','always','some','any','enough','made','only'],
+  'did': ['not','you','he','she','it','the','they','we','i','a','that','this','so','what','everything','nothing','well','his','her','my'],
+  'let': ['me','the','it','us','him','her','them','go','you','a','my','your','alone','down','in','out','know','be','this','that'],
+  'say': ['that','the','it','i','a','something','anything','nothing','he','she','they','you','we','what','how','this','about','to','no','yes'],
+  'going': ['to','on','through','back','home','out','for','well','down','up','in','forward','into','around','away','over','and','the','a','with'],
+  'don': ['t','know','think','want','have','need','like','care','worry','get','say','mind','see','believe','understand','remember','forget','let','feel','be'],
+  'been': ['a','the','in','to','so','there','able','here','doing','made','very','more','around','through','going','working','used','given','set','said'],
+  'same': ['time','thing','way','as','day','place','year','old','people','one','level','type','kind','amount','number','reason','problem','story','goes','point'],
+  'world': ['of','and','is','the','war','in','cup','wide','around','class','a','that','has','we','record','trade','bank','series','health','to'],
+  'life': ['is','and','of','in','the','a','to','was','has','that','i','on','can','we','it','with','for','at','will','my'],
+  'man': ['who','and','in','is','was','of','the','a','with','that','to','named','called','had','said','has','from','on','can','would'],
+  'home': ['and','to','in','the','is','a','of','page','from','for','with','on','run','was','after','at','i','game','team','or'],
+  'love': ['you','it','the','to','and','is','this','with','my','a','that','of','her','him','your','me','life','for','how','in'],
+  'thing': ['is','that','about','i','to','you','and','the','in','was','we','he','she','they','for','a','would','can','could','ever'],
+  'things': ['like','that','are','i','to','you','and','the','in','we','they','about','were','have','can','would','could','will','go','get'],
+  'two': ['of','the','and','or','years','days','weeks','months','more','things','times','people','other','different','main','new','hours','ways','men','sides'],
+  'three': ['of','the','and','or','years','days','times','more','weeks','months','other','main','people','different','children','new','men','parts','types','groups'],
+  'more': ['than','and','of','or','about','the','likely','people','important','information','time','often','a','to','in','on','details','recent','interesting','money'],
+  'who': ['is','are','was','were','have','has','had','will','would','can','could','want','the','do','did','may','might','said','know','think'],
+  'its': ['own','not','a','the','first','way','best','name','members','use','current','new','original','place','history','part','main','most','peak','role'],
+  'here': ['is','are','and','in','the','to','for','a','we','i','you','at','on','it','that','with','today','again','from','now'],
+  'little': ['bit','more','too','while','one','of','or','the','to','about','a','and','is','over','like','less','man','boy','girl','known'],
+  'every': ['day','time','year','one','single','week','other','thing','night','morning','person','part','bit','step','minute','month','hour','moment','chance','aspect'],
+  'around': ['the','and','a','in','here','it','for','to','him','her','them','with','me','us','you','my','his','your','that','this'],
+  'because': ['of','it','i','the','he','they','she','we','you','there','that','this','his','her','my','your','our','a','its','most'],
+  'something': ['like','that','about','to','is','i','you','we','they','else','in','the','new','wrong','different','good','more','and','for','very'],
+  'always': ['been','have','had','be','a','the','wanted','thought','knew','said','will','was','is','loved','remember','comes','felt','find','get','seems'],
+  'those': ['who','are','were','of','in','with','that','things','people','the','days','times','same','around','other','two','and','from','a','involved'],
+  'start': ['a','the','to','with','of','over','from','and','your','my','by','again','up','at','in','on','making','doing','working','looking'],
+  'end': ['of','the','up','and','to','in','result','a','is','it','with','was','game','point','goal','product','user','zone','there','this'],
+  'place': ['to','in','the','and','of','a','is','where','for','at','was','on','it','that','called','like','your','my','with','or'],
+  'show': ['the','that','you','me','him','her','them','us','a','up','it','your','my','how','what','and','off','some','more','any'],
+  'turn': ['out','around','into','the','off','on','up','back','down','a','it','to','in','over','and','right','left','your','my','away'],
+  'move': ['on','to','the','forward','into','out','in','a','up','and','from','back','away','around','over','it','your','my','quickly','through'],
+  'feel': ['like','the','that','it','good','free','a','bad','better','very','so','comfortable','happy','about','safe','sorry','more','i','my','this'],
+  'real': ['life','world','estate','time','name','thing','problem','issue','question','reason','difference','people','deal','and','change','quick','value','sense','money','way'],
+  'point': ['of','is','in','the','out','to','where','a','and','that','was','at','for','it','i','here','guard','being','about','has'],
+  'change': ['the','in','is','your','my','it','a','and','of','to','their','his','her','from','that','was','has','can','will','for'],
+  'hand': ['and','in','the','of','is','a','to','on','it','over','with','was','out','up','at','his','her','my','that','side'],
+  'big': ['deal','and','the','enough','one','time','part','picture','thing','fan','game','step','day','name','city','man','difference','question','problem','change'],
+  'play': ['a','the','in','with','an','it','and','games','music','ball','out','on','for','against','at','by','together','well','guitar','piano'],
+  'small': ['and','the','a','number','amount','group','part','town','business','size','but','enough','one','piece','scale','space','percentage','area','fraction','step'],
+  'talk': ['about','to','the','and','with','a','of','show','is','i','you','we','they','he','she','it','more','like','radio','that'],
+  'sure': ['that','you','the','i','to','it','about','of','we','they','he','she','if','what','how','enough','your','thing','am','is'],
+  'read': ['the','a','about','it','more','this','and','my','his','her','your','our','that','in','on','through','books','an','some','all'],
+  'leave': ['the','a','it','me','him','her','them','us','your','my','out','behind','alone','home','and','for','in','at','on','room'],
+  'run': ['the','a','by','in','out','and','for','into','away','off','on','it','up','through','around','down','over','with','to','his'],
+  'close': ['to','the','and','a','enough','by','friends','up','down','at','in','together','it','his','her','my','your','that','behind','call'],
+  'own': ['and','the','a','way','life','home','personal','business','in','terms','right','hands','experience','words','money','interest','back','name','pace','thing'],
+  'thought': ['it','that','about','i','the','was','he','she','of','you','we','they','would','to','his','her','my','this','a','is'],
+  'kind': ['of','and','the','a','to','is','that','you','enough','person','thing','in','i','he','she','heart','words','funny','like','weird'],
+  'might': ['be','have','not','the','a','also','want','need','well','just','even','think','get','find','make','come','take','help','seem','actually'],
+  'away': ['from','and','the','in','to','a','with','for','it','at','by','his','her','my','your','game','on','an','all','that'],
+  'came': ['to','back','in','out','up','from','and','the','a','into','home','down','with','here','on','through','over','along','together','across'],
+  'she': ['was','is','had','has','said','would','did','will','could','also','can','went','got','may','should','might','came','then','just','made'],
+  'world': ['of','and','is','the','in','war','cup','wide','around','class','a','that','has','we','record','trade','bank','series','health','to'],
+  'off': ['the','and','to','a','in','his','her','my','with','at','it','on','by','of','from','an','their','as','your','guard'],
+  'next': ['to','the','day','time','year','week','step','thing','one','morning','level','generation','door','few','chapter','season','round','month','two','move'],
+  'head': ['of','and','the','to','in','a','is','on','coach','over','back','down','out','up','into','was','with','his','her','for'],
+  'may': ['be','have','not','the','a','also','well','even','i','you','he','she','it','we','they','need','want','find','seem','come'],
+  'year': ['old','and','the','of','in','is','was','a','to','ago','round','after','for','i','we','he','it','when','at','by'],
+  'must': ['be','have','not','the','a','also','i','you','we','they','he','she','it','do','say','remember','admit','understand','first','learn'],
+  'through': ['the','a','and','his','her','my','your','its','an','it','this','that','our','their','all','some','many','each','every','two'],
+  'used': ['to','in','the','for','by','as','a','and','it','is','was','be','his','her','my','an','their','our','your','this'],
+  'such': ['a','as','the','an','things','cases','that','is','were','are','people','information','systems','programs','groups','places','areas','issues','events','actions'],
+  'himself': ['and','in','the','a','to','as','from','with','on','up','by','was','is','into','that','out','at','for','he','his'],
+  'each': ['other','of','the','and','year','day','time','one','with','a','in','person','side','new','week','game','player','team','member','group'],
+  'be': ['a','the','able','used','in','more','very','done','sure','there','here','happy','good','ready','careful','honest','fair','nice','hard','easy'],
+  'at': ['the','a','least','all','this','home','first','that','any','some','it','one','an','work','night','once','best','most','him','her'],
+  'or': ['the','a','not','any','more','other','two','an','even','is','less','she','he','just','it','that','if','they','we','some'],
+  'but': ['i','the','it','he','she','they','we','you','a','that','not','this','there','is','in','also','what','if','when','his'],
+  'has': ['been','a','the','not','no','to','its','an','also','had','it','his','her','never','always','already','only','just','made','become'],
+  'his': ['own','first','wife','life','name','father','mother','head','hand','way','face','work','son','brother','family','home','back','eyes','death','heart'],
+  'her': ['own','first','husband','life','name','mother','father','head','hand','way','face','work','daughter','sister','family','home','back','eyes','heart','hair'],
+  'him': ['and','the','a','to','in','that','as','for','with','about','from','out','up','back','on','down','into','by','at','of'],
+  'them': ['and','the','a','to','in','that','as','for','with','about','from','out','up','back','on','down','into','by','at','of'],
+  'an': ['important','old','hour','interesting','easy','open','example','early','average','excellent','issue','idea','article','area','event','effort','option','order','act','air'],
+  'which': ['is','are','was','were','has','had','can','will','would','could','may','might','the','means','makes','includes','should','they','he','she'],
+  'from': ['the','a','his','her','my','your','our','their','an','it','this','that','one','all','each','other','here','there','any','some'],
+  'by': ['the','a','his','her','my','your','our','their','an','it','this','that','all','many','some','any','other','two','using','far'],
+  'their': ['own','first','way','lives','children','work','home','families','friends','name','money','time','best','new','hands','eyes','heads','country','part','last'],
+  'our': ['own','first','best','new','way','lives','children','work','home','family','friends','country','world','community','team','goal','future','society','time','company'],
+  'your': ['own','first','best','new','way','life','children','work','home','family','friends','name','money','time','hand','phone','email','account','local','help'],
+  'where': ['the','you','i','he','she','it','they','we','is','are','was','were','do','did','a','my','your','his','her','there'],
+  'why': ['i','you','we','they','he','she','it','the','do','did','is','are','was','were','not','would','should','this','that','don'],
+  'any': ['of','other','more','time','way','one','thing','kind','questions','reason','case','idea','help','information','the','given','new','particular','good','further'],
+  'come': ['back','to','up','in','out','from','and','on','with','home','here','down','into','a','the','over','through','together','along','across'],
+  'already': ['been','have','had','a','the','in','know','said','done','is','was','are','started','made','got','seen','heard','taken','given','there'],
+  'into': ['the','a','his','her','my','your','our','their','an','it','this','that','one','account','play','contact','action','place','effect','focus'],
+  'being': ['a','the','used','able','made','done','said','in','an','one','that','so','too','very','there','here','and','or','with','more'],
+  'both': ['the','of','in','and','a','sides','are','were','have','had','his','her','my','your','their','men','women','teams','parties','cases'],
+  'enough': ['to','for','of','that','and','the','about','is','time','money','room','space','people','information','evidence','food','water','energy','power','data'],
+  'able': ['to','and','the','a','in','for','of','is','was','be','were','are'],
+  'again': ['and','the','in','to','a','i','it','he','she','they','we','with','for','after','by','at','this','that','until','but'],
+  'different': ['from','than','ways','things','types','kinds','people','parts','levels','places','versions','areas','groups','aspects','approaches','styles','forms','colors','sizes','opinions'],
+  'everything': ['is','you','i','we','they','he','she','from','about','that','in','else','was','and','the','has','had','will','would','can'],
+  'together': ['and','the','with','in','to','a','for','we','they','as','by','on','again','at','it','is','are','were','into','all'],
+  'doesn': ['t','mean','matter','work','have','make','seem','look','feel','sound','need','want','help','know','get','take','change','stop','exist','apply'],
+  'didn': ['t','know','think','want','have','get','see','say','mean','need','understand','realize','expect','like','care','matter','believe','remember','feel','work'],
+  'won': ['t','the','a','by','over','his','her','their','and','be','have','let','stop','get','make','find','take','need','help','work'],
+  'isn': ['t','it','that','the','this','there','he','she','a','enough','always','going','really','just','exactly','quite','much','very','about','working'],
+  'aren': ['t','you','they','we','there','the','going','enough','sure','ready','able','happy','interested','worried','afraid','supposed','allowed','available','getting','many'],
+  'wasn': ['t','it','he','she','that','the','there','i','a','sure','going','able','ready','enough','just','really','even','much','quite','exactly'],
+  'done': ['with','by','the','in','a','and','to','it','for','that','before','so','well','nothing','everything','something','anything','right','wrong','much'],
+  'better': ['than','and','the','to','at','in','for','off','way','place','job','understanding','chance','world','life','person','deal','quality','experience','idea'],
+  'quite': ['a','the','well','good','right','sure','different','clear','easy','common','simple','possible','popular','nice','long','large','small','high','similar','often'],
+  'whether': ['or','the','it','you','they','we','he','she','i','a','this','that','there','to','is','was','are','were','have','had'],
+  'while': ['the','i','he','she','it','they','we','you','a','still','also','there','some','most','many','other','being','playing','working','trying'],
+  'between': ['the','two','a','and','his','her','them','us','you','me','him','it','different','both','these','those','various','each','all','other'],
+  'under': ['the','a','his','her','my','your','its','their','an','pressure','control','way','certain','any','no','fire','attack','some','construction','investigation'],
+  'along': ['the','with','and','a','his','her','my','your','its','their','an','it','that','this','side','way','road','river','coast','line'],
+  'since': ['the','then','i','it','he','she','they','we','a','his','her','my','its','that','this','last','being','early','january','there'],
+  'else': ['is','can','could','would','in','to','the','a','you','i','we','they','he','she','it','but','and','has','than','who'],
+  'however': ['the','it','i','he','she','they','we','you','a','this','that','there','in','is','was','many','some','most','not','much'],
+  'part': ['of','the','in','and','a','is','time','one','two','was','i','that','it','by','from','to','with','about','at','being'],
+  'later': ['the','he','she','it','they','i','we','in','a','that','on','and','this','his','her','became','was','said','went','came'],
+  'found': ['the','a','that','it','in','out','his','her','my','to','him','her','them','no','on','itself','himself','herself','guilty','dead'],
+  'though': ['the','it','i','he','she','they','we','you','a','that','this','there','his','her','my','not','some','most','many','still'],
+  'left': ['the','a','and','in','to','his','her','my','with','it','behind','side','hand','out','at','over','for','on','by','off'],
+  'down': ['the','to','and','a','in','on','at','his','her','by','from','into','there','here','with','for','my','your','it','an'],
+  'high': ['school','and','the','a','level','quality','enough','in','point','end','court','speed','up','time','above','as','on','rate','risk','cost'],
+  'away': ['from','and','the','in','to','a','with','for','it','at','by','his','her','my','your','game','on','an','all','that'],
+  'number': ['of','one','two','and','the','in','is','a','was','that','for','on','has','with','at','by','from','to','or','it'],
+  'off': ['the','and','to','a','in','his','her','my','with','at','it','on','by','of','from','an','their','as','your','guard'],
+};
+
+
+// Get predicted next words based on previous word
+function getNextWordPredictions(prevWord) {
+  if (!prevWord) return [];
+  return WORD_BIGRAMS[prevWord.toLowerCase()] || [];
+}
+
+// Get letter predictions boosted by word context
+function getContextualPredictions(prefix, prevWord) {
+  prefix = prefix.toLowerCase();
+
+  // Get base predictions from prefix index
+  const baseCounts = prefixIndex.get(prefix);
+  const merged = new Map();
+
+  if (baseCounts) {
+    for (const [ch, count] of baseCounts) {
+      merged.set(ch, count);
+    }
+  }
+
+  // Boost letters that start predicted next words
+  if (prevWord && prefix.length <= 2) {
+    const nextWords = getNextWordPredictions(prevWord);
+    for (let i = 0; i < nextWords.length; i++) {
+      const w = nextWords[i];
+      if (w.startsWith(prefix)) {
+        const nextChar = w[prefix.length];
+        if (nextChar) {
+          const boost = Math.round(200 * (1 - i / nextWords.length));
+          merged.set(nextChar, (merged.get(nextChar) || 0) + boost);
+        }
+      }
+    }
+  }
+
+  // Boost letters from top word completions — scale boost relative to
+  // the highest count so common words always surface their next letter
+  const completions = getWordCompletions(prefix);
+  if (completions.length > 0) {
+    const maxCount = merged.size > 0 ? Math.max(...merged.values()) : 100;
+    for (let i = 0; i < Math.min(5, completions.length); i++) {
+      const w = completions[i];
+      const nextChar = w[prefix.length];
+      if (nextChar) {
+        // #1 completion gets 70% of max count, #2 gets 56%, etc.
+        const boost = Math.round(maxCount * 0.7 * (1 - i / 5));
+        merged.set(nextChar, (merged.get(nextChar) || 0) + boost);
+      }
+    }
+  }
+
+  if (merged.size === 0) {
+    return 'etaoinsrhld'.split('');
+  }
+
+  return [...merged.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([ch]) => ch)
+    .slice(0, 10);
+}
+
+// ---- State ----
+let typedText = '';
+let currentInput = '';
+let lastWord = ''; // track previous completed word
+let mode = 'qwerty'; // 'qwerty' or 'predict'
+
+function isStartOfSentence() {
+  if (typedText.length === 0) return true;
+  const trimmed = typedText.trimEnd();
+  if (trimmed.length === 0) return true;
+  const lastChar = trimmed[trimmed.length - 1];
+  return '.!?\n'.includes(lastChar);
+}
+
+function displayWord(word) {
+  // Always capitalize "I"
+  if (word.toLowerCase() === 'i') return 'I';
+  // Capitalize first letter at start of sentence
+  if (isStartOfSentence() && currentInput.length === 0) {
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }
+  return word;
+}
+let swipeDirection = null; // 'top' or 'bot' — which predict row the user last swiped to
+
+const QWERTY_TOP = 'qwertyuiop'.split('');
+const QWERTY_MID = 'asdfghjkl'.split('');
+const QWERTY_BOT = 'zxcvbnm'.split('');
+
+// ---- Common starting/fallback words ----
+const STARTER_WORDS_TOP = ['the','i','a','it','is'];
+const STARTER_WORDS_BOT = ['we','you','this','my','so'];
+const FALLBACK_WORDS = ['the','and','to','a','is','in','it','of','that','for','you','was','with','on','i','this','have','not','are','but'];
+
+// ---- Rendering ----
+function renderQwerty() {
+  mode = 'qwerty';
+
+  // Use next-word predictions if available, otherwise common starters
+  const nextWords = getNextWordPredictions(lastWord);
+  let topWords, botWords;
+
+  if (nextWords.length >= 6) {
+    topWords = nextWords.slice(0, 5);
+    botWords = nextWords.slice(5, 10);
+  } else if (nextWords.length > 0) {
+    topWords = nextWords.slice(0, Math.min(5, nextWords.length));
+    botWords = STARTER_WORDS_BOT.slice(0, 5);
+  } else {
+    topWords = STARTER_WORDS_TOP;
+    botWords = STARTER_WORDS_BOT;
+  }
+
+  const topItems = topWords.map(w => ({ type: 'word', value: w }));
+  const botItems = botWords.map(w => ({ type: 'word', value: w }));
+
+  if (isSwiping && swipeDirection) {
+    // During swipe: put next-word predictions on opposite row
+    const allItems = [...topItems, ...botItems];
+    const targetRow = swipeDirection === 'top' ? 'predict-bot' : 'predict-top';
+    const staleRow = swipeDirection === 'top' ? 'predict-top' : 'predict-bot';
+    renderPredictRow(targetRow, allItems.slice(0, 5));
+    renderPredictRow(staleRow, allItems.slice(5, 10));
+  } else {
+    renderPredictRow('predict-top', topItems);
+    renderPredictRow('predict-bot', botItems);
+  }
+
+  renderRow('row-top', QWERTY_TOP, false);
+  renderRow('row-mid', QWERTY_MID, false);
+  renderRow('row-bot', QWERTY_BOT, false);
+  updateArrows(false, false);
+  updateStatus('Tap a letter or word to start');
+}
+
+function renderRow(rowId, letters, isPredict) {
+  const row = document.getElementById(rowId);
+  row.innerHTML = letters.map(l =>
+    `<div class="key ${isPredict ? 'predict' : ''}" data-letter="${l}">
+      <span class="key-label">${l}</span>
+    </div>`
+  ).join('');
+}
+
+function renderPredictRow(rowId, items) {
+  const row = document.getElementById(rowId);
+  if (items.length === 0) {
+    row.innerHTML = '<div class="key predict" style="visibility:hidden;flex:1;max-width:none;">&nbsp;</div>';
+    row.classList.remove('glow');
+    return;
+  }
+  row.innerHTML = items.map(item => {
+    if (item.type === 'word') {
+      const label = displayWord(item.value);
+      return `<div class="key predict word-key" data-word="${item.value}">
+        <span class="key-label">${label}</span>
+      </div>`;
+    }
+    return `<div class="key predict" data-letter="${item.value}">
+      <span class="key-label">${item.value}</span>
+    </div>`;
+  }).join('');
+  // Trigger glow animation
+  row.classList.remove('glow');
+  void row.offsetWidth; // force reflow to restart animation
+  row.classList.add('glow');
+}
+
+function updateArrows(showTop, showBot) {
+  const arrowUp = document.getElementById('arrow-up');
+  const arrowDown = document.getElementById('arrow-down');
+  arrowUp.classList.toggle('visible', showTop);
+  arrowDown.classList.toggle('visible', showBot);
+}
+
+function renderPredictions(fromQwertyRow) {
+  mode = 'predict';
+  const preds = getContextualPredictions(currentInput, lastWord);
+
+  // Get word completions
+  const prefix = currentInput.toLowerCase();
+  const bigramWords = getNextWordPredictions(lastWord)
+    .filter(w => w.startsWith(prefix) && w !== prefix);
+  const generalWords = getWordCompletions(currentInput)
+    .filter(w => !bigramWords.includes(w));
+  const words = [...bigramWords, ...generalWords].slice(0, 4);
+
+  // Build prediction items: letters + words
+  const allItems = [];
+  for (let i = 0; i < Math.min(5, preds.length); i++) {
+    allItems.push({ type: 'letter', value: preds[i] });
+  }
+  for (let i = 0; i < Math.min(3, words.length); i++) {
+    allItems.push({ type: 'word', value: words[i] });
+  }
+
+  // Determine which row the letter came from
+  let sourceRow = fromQwertyRow || null;
+  if (!sourceRow && isSwiping && swipeDirection) {
+    sourceRow = swipeDirection;
+  }
+  if (!sourceRow) {
+    // Figure it out from the last letter typed
+    const lastLetter = currentInput[currentInput.length - 1];
+    if (QWERTY_TOP.includes(lastLetter)) sourceRow = 'top';
+    else if (QWERTY_BOT.includes(lastLetter)) sourceRow = 'bot';
+    else sourceRow = 'mid';
+  }
+
+  const emptyItems = [];
+
+  if (sourceRow === 'top') {
+    // Came from top QWERTY row — only show predictions on bottom
+    renderPredictRow('predict-top', emptyItems);
+    renderPredictRow('predict-bot', allItems.slice(0, 5));
+    updateArrows(false, true);
+  } else if (sourceRow === 'bot') {
+    // Came from bottom QWERTY row — only show predictions on top
+    renderPredictRow('predict-top', allItems.slice(0, 5));
+    renderPredictRow('predict-bot', emptyItems);
+    updateArrows(true, false);
+  } else {
+    // Came from middle row or prediction row — show on both
+    const topItems = allItems.slice(0, Math.min(5, allItems.length));
+    const botItems = allItems.slice(5, 8);
+    renderPredictRow('predict-top', topItems);
+    renderPredictRow('predict-bot', botItems);
+    updateArrows(true, true);
+  }
+
+  renderRow('row-top', QWERTY_TOP, false);
+  renderRow('row-mid', QWERTY_MID, false);
+  renderRow('row-bot', QWERTY_BOT, false);
+
+  updateStatus(`"${currentInput}" → ${preds.slice(0, 6).join(', ')}`);
+}
+
+function updateDisplay() {
+  document.getElementById('typed-text').textContent = typedText;
+  document.getElementById('current-input').textContent = currentInput;
+}
+
+function updateStatus(msg) {
+  document.getElementById('status-bar').textContent = msg;
+}
+
+
+function selectLetter(letter, fromQwertyRow) {
+  currentInput += letter;
+  updateDisplay();
+  renderPredictions(fromQwertyRow);
+}
+
+function commitWord(word, fromRow) {
+  let output = word.toLowerCase();
+  // Always capitalize "I"
+  if (output === 'i') output = 'I';
+  // Capitalize at start of sentence
+  else if (isStartOfSentence() && currentInput.length <= word.length) {
+    output = output.charAt(0).toUpperCase() + output.slice(1);
+  }
+  typedText += output + ' ';
+  lastWord = word.toLowerCase();
+  currentInput = '';
+  updateDisplay();
+
+  if (fromRow) {
+    // Came from a prediction row — show next predictions on opposite row, clear this one
+    const nextWords = getNextWordPredictions(lastWord);
+    const items = nextWords.slice(0, 5).map(w => ({ type: 'word', value: w }));
+    const emptyRow = [];
+
+    if (fromRow === 'top') {
+      renderPredictRow('predict-top', emptyRow);
+      renderPredictRow('predict-bot', items);
+      updateArrows(false, items.length > 0);
+    } else {
+      renderPredictRow('predict-top', items);
+      renderPredictRow('predict-bot', emptyRow);
+      updateArrows(items.length > 0, false);
+    }
+    renderRow('row-top', QWERTY_TOP, false);
+    renderRow('row-mid', QWERTY_MID, false);
+    renderRow('row-bot', QWERTY_BOT, false);
+    mode = 'qwerty';
+  } else {
+    renderQwerty();
+  }
+}
+
+function handleBackspace() {
+  if (currentInput.length > 0) {
+    currentInput = currentInput.slice(0, -1);
+    updateDisplay();
+    if (currentInput.length === 0) {
+      renderQwerty();
+    } else {
+      renderPredictions();
+    }
+  } else if (typedText.length > 0) {
+    // Remove last character or word
+    typedText = typedText.trimEnd();
+    if (typedText.length > 0) {
+      // Find last space to go back a word
+      const lastSpace = typedText.lastIndexOf(' ');
+      if (lastSpace >= 0) {
+        typedText = typedText.slice(0, lastSpace + 1);
+      } else {
+        typedText = '';
+      }
+    }
+    updateDisplay();
+  }
+}
+
+function handleSpace() {
+  if (currentInput.length > 0) {
+    commitWord(currentInput);
+  } else {
+    typedText += ' ';
+    updateDisplay();
+  }
+}
+
+function handleEnter() {
+  if (currentInput.length > 0) {
+    commitWord(currentInput);
+  }
+  typedText += '\n';
+  updateDisplay();
+}
+
+// ---- Event handling ----
+function handleKeyTap(el) {
+  const letter = el.dataset.letter;
+  const action = el.dataset.action;
+  const word = el.dataset.word;
+
+  if (word) {
+    commitWord(word);
+    return;
+  }
+
+  if (action === 'backspace') { handleBackspace(); return; }
+  if (action === 'space') { handleSpace(); return; }
+  if (action === 'enter') { handleEnter(); return; }
+
+  if (letter) {
+    selectLetter(letter);
+  }
+}
+
+// ---- Swipe engine ----
+let isSwiping = false;
+let swipeLetterCount = 0; // how many letters picked up during this swipe
+let lastSwipeKey = null;  // DOM element for visual state
+let lastSwipeValue = null; // letter/word value to prevent re-triggering after re-render
+let swipeStartX = 0;
+let swipeStartY = 0;
+let lastPickupTime = 0; // timestamp of last letter pickup
+const SWIPE_THRESHOLD = 30; // pixels before swipe activates
+const PICKUP_COOLDOWN = 200; // ms to wait after each pickup before allowing next
+
+function getKeyAtPoint(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  return el.closest('.key');
+}
+
+const keyboard = document.getElementById('keyboard');
+
+keyboard.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  keyboard.setPointerCapture(e.pointerId);
+
+  const key = getKeyAtPoint(e.clientX, e.clientY);
+  if (!key) return;
+
+  const action = key.dataset.action;
+  if (action) {
+    key.classList.add('active');
+    if (action === 'backspace') handleBackspace();
+    else if (action === 'space') handleSpace();
+    else if (action === 'enter') handleEnter();
+    setTimeout(() => key.classList.remove('active'), 120);
+    return;
+  }
+
+  const letter = key.dataset.letter;
+  const word = key.dataset.word;
+
+  // Tapping a word key — commit it and start a swipe session for chaining
+  if (word) {
+    key.classList.add('active');
+    let fromRow = null;
+    if (key.closest('#predict-top')) fromRow = 'top';
+    else if (key.closest('#predict-bot')) fromRow = 'bot';
+    swipeDirection = fromRow;
+    commitWord(word, fromRow);
+    setTimeout(() => key.classList.remove('active'), 120);
+    // Start swipe session so user can continue swiping to next word
+    isSwiping = true;
+    swipeStartX = e.clientX;
+    swipeStartY = e.clientY;
+    lastPickupTime = Date.now();
+    swipeLetterCount = 1;
+    lastSwipeKey = null;
+    lastSwipeValue = null;
+    return;
+  }
+
+  if (!letter) return;
+
+  // Detect which QWERTY row this letter is in
+  let qwertyRow = null;
+  if (key.closest('#row-top')) qwertyRow = 'top';
+  else if (key.closest('#row-bot')) qwertyRow = 'bot';
+  else if (key.closest('#row-mid')) qwertyRow = 'mid';
+
+  // Start swiping
+  isSwiping = true;
+  swipeStartX = e.clientX;
+  swipeStartY = e.clientY;
+  lastPickupTime = Date.now();
+  swipeLetterCount = 1;
+  lastSwipeKey = key;
+  lastSwipeValue = letter;
+
+  document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+  key.classList.add('active');
+  selectLetter(letter, qwertyRow);
+});
+
+keyboard.addEventListener('pointermove', (e) => {
+  if (!isSwiping) return;
+  e.preventDefault();
+
+  // Require both minimum distance AND cooldown time since last pickup
+  const dx = e.clientX - swipeStartX;
+  const dy = e.clientY - swipeStartY;
+  if (Math.sqrt(dx * dx + dy * dy) < SWIPE_THRESHOLD) return;
+  if (Date.now() - lastPickupTime < PICKUP_COOLDOWN) return;
+
+  const key = getKeyAtPoint(e.clientX, e.clientY);
+  if (!key) return;
+
+  // Check by value, not DOM element (elements get replaced on re-render)
+  const keyValue = key.dataset.letter || key.dataset.word || null;
+  if (!keyValue || keyValue === lastSwipeValue) return;
+
+  // Only pick up prediction keys while swiping (green/blue keys)
+  if (!key.classList.contains('predict')) return;
+
+  const letter = key.dataset.letter;
+  const word = key.dataset.word;
+
+  // Mark previous key as visited (trail)
+  if (lastSwipeKey && lastSwipeKey.parentNode) lastSwipeKey.classList.add('visited');
+  lastSwipeKey = key;
+  lastSwipeValue = keyValue;
+
+  document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+  key.classList.add('active');
+
+  if (word) {
+    // Swiped to a word completion — commit it immediately
+    swipeStartX = e.clientX;
+    swipeStartY = e.clientY;
+    if (key.closest('#predict-top')) swipeDirection = 'top';
+    else if (key.closest('#predict-bot')) swipeDirection = 'bot';
+    lastPickupTime = Date.now();
+    document.querySelectorAll('.key.visited').forEach(k => k.classList.remove('visited'));
+    document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+    commitWord(word, swipeDirection);
+    lastSwipeKey = null;
+    lastSwipeValue = null;
+    // Keep isSwiping true — user can continue swiping to next word predictions
+    return;
+  }
+
+  if (letter) {
+    swipeLetterCount++;
+    swipeStartX = e.clientX;
+    swipeStartY = e.clientY;
+    lastPickupTime = Date.now();
+    // Track which prediction row the user swiped to
+    if (key.closest('#predict-top')) swipeDirection = 'top';
+    else if (key.closest('#predict-bot')) swipeDirection = 'bot';
+    selectLetter(letter, swipeDirection);
+  }
+});
+
+keyboard.addEventListener('pointerup', (e) => {
+  if (!isSwiping) return;
+  e.preventDefault();
+
+  document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+  document.querySelectorAll('.key.visited').forEach(k => k.classList.remove('visited'));
+
+  // If we swiped through at least 2 letters (initial + 1 prediction),
+  // auto-commit the word with auto-space. Single taps don't auto-commit.
+  if (swipeLetterCount >= 2 && currentInput.length >= 2) {
+    commitWord(currentInput);
+  }
+
+  isSwiping = false;
+  swipeLetterCount = 0;
+  lastSwipeKey = null;
+  lastSwipeValue = null;
+  swipeDirection = null;
+});
+
+keyboard.addEventListener('pointercancel', (e) => {
+  isSwiping = false;
+  swipeLetterCount = 0;
+  lastSwipeKey = null;
+  lastSwipeValue = null;
+  swipeDirection = null;
+  document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+});
+
+
+// Keyboard input for desktop testing
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Backspace') {
+    e.preventDefault();
+    handleBackspace();
+  } else if (e.key === ' ') {
+    e.preventDefault();
+    handleSpace();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    handleEnter();
+  } else if (e.key.length === 1 && /[a-z]/i.test(e.key)) {
+    const lk = e.key.toLowerCase();
+    let row = 'mid';
+    if (QWERTY_TOP.includes(lk)) row = 'top';
+    else if (QWERTY_BOT.includes(lk)) row = 'bot';
+    selectLetter(lk, row);
+  }
+});
+
+// ---- Init ----
+renderQwerty();
+updateDisplay();
+</script>
+
+</body>
+</html>
