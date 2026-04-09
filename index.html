@@ -63,6 +63,18 @@
       justify-content: center;
       margin: 3px 0;
       gap: 4px;
+      transition: opacity 0.2s, max-height 0.25s, margin 0.25s;
+      overflow: hidden;
+    }
+    .kb-row.dimmed {
+      opacity: 0.15;
+      pointer-events: none;
+    }
+    .kb-row.collapsed {
+      max-height: 8px;
+      opacity: 0.08;
+      pointer-events: none;
+      margin: 0;
     }
 
     .key {
@@ -666,8 +678,24 @@ function renderQwerty() {
   renderRow('row-top', QWERTY_TOP, false);
   renderRow('row-mid', QWERTY_MID, false);
   renderRow('row-bot', QWERTY_BOT, false);
+  // Dim QWERTY if we have actual word predictions from bigrams
+  const hasPredictions = lastWord !== '' && getNextWordPredictions(lastWord).length > 0;
+  setQwertyDim(hasPredictions);
   updateArrows(false, false);
-  updateStatus('Tap a letter or word to start');
+  updateStatus(hasPredictions ? 'Tap a word or letter' : 'Tap a letter or word to start');
+}
+
+function setQwertyDim(dimmed) {
+  const rows = ['row-top', 'row-mid', 'row-bot'];
+  for (const id of rows) {
+    const row = document.getElementById(id);
+    if (dimmed) {
+      row.classList.add('dimmed');
+    } else {
+      row.classList.remove('dimmed');
+      row.classList.remove('collapsed');
+    }
+  }
 }
 
 function renderRow(rowId, letters, isPredict) {
@@ -768,6 +796,7 @@ function renderPredictions(fromQwertyRow) {
   renderRow('row-top', QWERTY_TOP, false);
   renderRow('row-mid', QWERTY_MID, false);
   renderRow('row-bot', QWERTY_BOT, false);
+  setQwertyDim(true);
 
   updateStatus(`"${currentInput}" → ${preds.slice(0, 6).join(', ')}`);
 }
@@ -819,6 +848,8 @@ function commitWord(word, fromRow) {
     renderRow('row-top', QWERTY_TOP, false);
     renderRow('row-mid', QWERTY_MID, false);
     renderRow('row-bot', QWERTY_BOT, false);
+    // Dim QWERTY if we have predictions, undim if empty (user needs to type manually)
+    setQwertyDim(items.length > 0);
     mode = 'qwerty';
   } else {
     renderQwerty();
@@ -975,8 +1006,25 @@ keyboard.addEventListener('pointermove', (e) => {
   // Require both minimum distance AND cooldown time since last pickup
   const dx = e.clientX - swipeStartX;
   const dy = e.clientY - swipeStartY;
-  if (Math.sqrt(dx * dx + dy * dy) < SWIPE_THRESHOLD) return;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < SWIPE_THRESHOLD) return;
   if (Date.now() - lastPickupTime < PICKUP_COOLDOWN) return;
+
+  // Detect horizontal swipe — if moving more sideways than vertically, reset to QWERTY
+  if (Math.abs(dx) > Math.abs(dy) * 1.5 && Math.abs(dx) > 50 && currentInput.length > 0) {
+    // Horizontal swipe detected — cancel current word, reset keyboard
+    currentInput = '';
+    updateDisplay();
+    renderQwerty();
+    isSwiping = false;
+    swipeLetterCount = 0;
+    lastSwipeKey = null;
+    lastSwipeValue = null;
+    swipeDirection = null;
+    document.querySelectorAll('.key.active').forEach(k => k.classList.remove('active'));
+    document.querySelectorAll('.key.visited').forEach(k => k.classList.remove('visited'));
+    return;
+  }
 
   const key = getKeyAtPoint(e.clientX, e.clientY);
   if (!key) return;
